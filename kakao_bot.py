@@ -1,69 +1,73 @@
+import os
 import time
-import threading
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
+import threading
 
-# 建立微型 Web 伺服器以滿足 Render 免費 Web Service 需求
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Kakao Monitor is running!"
+# --- 設定區 ---
+KAKAO_URL = "https://open.kakao.com/o/gU3wVbG"
+TELEGRAM_BOT_TOKEN = "8977176422:AAGhPii3CcVElSm6KD1otLIsC9AXygTJnv4"
+TELEGRAM_CHAT_ID = "8688789964"
 
-# 設定資訊
-TOKEN = "8977176422:AAGhPii3CcVElSm6KD1otLIsC9AXygTJnv4"
-CHAT_ID = "8688789964"
-URL = "https://open.kakao.com/o/gU3wVbG"
-CHECK_INTERVAL = 300
+last_count = None
 
-def send_telegram_message(message):
-    api_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message}
+def get_kakao_member_count():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
-        requests.post(api_url, data=payload, timeout=10)
+        res = requests.get(KAKAO_URL, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        
+        # 抓取 KakaoTalk 人數標籤
+        count_element = soup.select_one("span.txt_num") or soup.select_one(".num_user") or soup.select_one(".count")
+        if count_element:
+            return count_element.text.strip()
+        
+        # 備用抓取法
+        for span in soup.find_all(["span", "p"]):
+            text = span.text.strip()
+            if text.isdigit() and len(text) <= 4:
+                return text
+        return "未知"
     except Exception as e:
-        print(f"發送失敗: {e}")
+        print(f"抓取失敗: {e}")
+        return None
 
-def get_group_member_count(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
+def send_telegram_msg(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            elem = soup.find('span', class_='num') or soup.find('em', class_='count')
-            if elem:
-                return int(elem.text.strip().replace(',', ''))
-            og = soup.find('meta', property='og:description')
-            if og and '名' in og.get('content', ''):
-                import re
-                m = re.search(r'(\d+)名', og['content'])
-                if m:
-                    return int(m.group(1))
-        return None
-    except:
-        return None
+        r = requests.post(url, data=payload, timeout=10)
+        print("Telegram 發送結果:", r.json())
+    except Exception as e:
+        print("Telegram 發送例外:", e)
 
-def monitor_loop():
-    print("=== 雲端 Kakao 監控小幫手啟動 ===")
-    last_count = None
-    send_telegram_message("🤖 您的 KakaoTalk 雲端監控小幫手已成功啟動！開始為您盯哨...")
+# 背景定期監控任務 (每 3 分鐘檢查一次)
+def background_monitor():
+    global last_count
     while True:
-        count = get_group_member_count(URL)
-        if count is not None:
-            if last_count is None:
-                last_count = count
-                send_telegram_message(f"📊 目前監控中的群組人數為: {count} 人")
-            elif count != last_count:
-                diff = count - last_count
-                diff_str = f"+{diff}" if diff > 0 else f"{diff}"
-                msg = f"🚨 【Kakao 聊天室人數變動】\n先前人數: {last_count}\n目前人數: {count} 人 ({diff_str})"
-                send_telegram_message(msg)
-                last_count = count
-        time.sleep(CHECK_INTERVAL)
+        current_count = get_kakao_member_count()
+        if current_count and current_count != last_count:
+            if last_count is not None:
+                msg = f"🔔 KakaoTalk 群組人數變動！\n舊人數：{last_count}\n最新人數：{current_count}"
+                send_telegram_msg(msg)
+            last_count = current_count
+        time.sleep(180)
 
-# 在背景啟動監控
-threading.Thread(target=monitor_loop, daemon=True).start()
+# 啟動背景線程
+threading.Thread(target=background_monitor, daemon=True).start()
+
+@app.route("/")
+def home():
+    current_count = get_kakao_member_count()
+    msg = f"🤖 KakaoTalk 監控小幫手連線正常！\n📊 當前群組人數為：{current_count} 人"
+    send_telegram_msg(msg)
+    return f"Kakao Monitor is running! Current count: {current_count}"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
