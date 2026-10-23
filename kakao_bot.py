@@ -1,22 +1,27 @@
 import time
+import threading
 import requests
 from bs4 import BeautifulSoup
+from flask import Flask
 
+# 建立微型 Web 伺服器以滿足 Render 免費 Web Service 需求
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Kakao Monitor is running!"
+
+# 設定資訊
 TOKEN = "8977176422:AAGhPii3CcVElSm6KD1otLIsC9AXygTJnv4"
 CHAT_ID = "8688789964"
 URL = "https://open.kakao.com/o/gU3wVbG"
 CHECK_INTERVAL = 300
 
-PROXIES = {
-    'http': 'http://proxy.server:3128',
-    'https': 'http://proxy.server:3128'
-}
-
 def send_telegram_message(message):
     api_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message}
     try:
-        requests.post(api_url, data=payload, proxies=PROXIES, timeout=10)
+        requests.post(api_url, data=payload, timeout=10)
     except Exception as e:
         print(f"發送失敗: {e}")
 
@@ -39,7 +44,7 @@ def get_group_member_count(url):
     except:
         return None
 
-def main():
+def monitor_loop():
     print("=== 雲端 Kakao 監控小幫手啟動 ===")
     last_count = None
     send_telegram_message("🤖 您的 KakaoTalk 雲端監控小幫手已成功啟動！開始為您盯哨...")
@@ -57,5 +62,8 @@ def main():
                 last_count = count
         time.sleep(CHECK_INTERVAL)
 
+# 在背景啟動監控
+threading.Thread(target=monitor_loop, daemon=True).start()
+
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=10000)
