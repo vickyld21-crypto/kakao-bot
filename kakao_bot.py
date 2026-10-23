@@ -17,24 +17,25 @@ last_count = None
 
 def get_kakao_member_count():
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
     }
     try:
         res = requests.get(KAKAO_URL, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
+        html_text = res.text
         
-        # 1. 優先嘗試標準 class 名稱
-        count_elem = soup.find("span", class_="txt_num") or soup.find("span", class_="num_user")
-        if count_elem and count_elem.text.strip():
-            return count_elem.text.strip()
-            
-        # 2. 搜尋包含人數或數字的元素
-        for span in soup.find_all(["span", "em", "p", "div"]):
-            text = span.text.strip()
-            # 匹配純數字或帶有逗號的數字 (例如 1,234 或 456)
-            if re.match(r'^\d{1,3}(,\d{3})*$', text) or (text.isdigit() and 1 <= int(text) <= 1500):
-                return text
-                
+        # 1. 直接在整頁原始碼中搜尋類似 "900/900" 或帶斜線的人數格式
+        match = re.search(r'(\d{1,4})\s*[/／]\s*(\d{1,4})', html_text)
+        if match:
+            current = match.group(1)
+            max_limit = match.group(2)
+            return f"{current}/{max_limit}人"
+
+        # 2. 備用：尋找包含數字的文字
+        numbers = re.findall(r'\b([1-9]\d{2,3})\b', html_text)
+        if numbers:
+            return f"{numbers[0]}人"
+
         return "無法解析"
     except Exception as e:
         print(f"抓取失敗: {e}")
@@ -67,7 +68,7 @@ threading.Thread(target=background_monitor, daemon=True).start()
 @app.route("/")
 def home():
     current_count = get_kakao_member_count()
-    msg = f"🤖 KakaoTalk 監控小幫手連線正常！\n📊 當前群組人數為：{current_count} 人"
+    msg = f"🤖 KakaoTalk 監控小幫手連線正常！\n📊 當前群組人數為：{current_count}"
     send_telegram_msg(msg)
     return f"Kakao Monitor is running! Current count: {current_count}"
 
