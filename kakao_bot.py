@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask
 import threading
+import re
 
 app = Flask(__name__)
 
@@ -22,20 +23,22 @@ def get_kakao_member_count():
         res = requests.get(KAKAO_URL, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
         
-        # 抓取 KakaoTalk 人數標籤
-        count_element = soup.select_one("span.txt_num") or soup.select_one(".num_user") or soup.select_one(".count")
-        if count_element:
-            return count_element.text.strip()
-        
-        # 備用抓取法
-        for span in soup.find_all(["span", "p"]):
+        # 1. 優先嘗試標準 class 名稱
+        count_elem = soup.find("span", class_="txt_num") or soup.find("span", class_="num_user")
+        if count_elem and count_elem.text.strip():
+            return count_elem.text.strip()
+            
+        # 2. 搜尋包含人數或數字的元素
+        for span in soup.find_all(["span", "em", "p", "div"]):
             text = span.text.strip()
-            if text.isdigit() and len(text) <= 4:
+            # 匹配純數字或帶有逗號的數字 (例如 1,234 或 456)
+            if re.match(r'^\d{1,3}(,\d{3})*$', text) or (text.isdigit() and 1 <= int(text) <= 1500):
                 return text
-        return "未知"
+                
+        return "無法解析"
     except Exception as e:
         print(f"抓取失敗: {e}")
-        return None
+        return "抓取錯誤"
 
 def send_telegram_msg(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -51,7 +54,7 @@ def background_monitor():
     global last_count
     while True:
         current_count = get_kakao_member_count()
-        if current_count and current_count != last_count:
+        if current_count and current_count not in ["無法解析", "抓取錯誤"] and current_count != last_count:
             if last_count is not None:
                 msg = f"🔔 KakaoTalk 群組人數變動！\n舊人數：{last_count}\n最新人數：{current_count}"
                 send_telegram_msg(msg)
